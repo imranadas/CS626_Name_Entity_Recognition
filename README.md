@@ -147,6 +147,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contact
 
-Your Name - [@yourusername](https://github.com/imranadas)
+Your Name - [@imranadas](https://github.com/imranadas)
 
 Project Link: [https://github.com/imranadas/CS626_Name_Entity_Recognition](https://github.com/imranadas/CS626_Name_Entity_Recognition)
