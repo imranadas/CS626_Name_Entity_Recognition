@@ -142,13 +142,32 @@ def display_tagged_text(tokens_with_predictions):
     logger.info("Displaying tagged text")
     try:
         html = []
-        for token, pred in tokens_with_predictions:
-            if pred == 1:
-                html.append(f'<span style="background-color: #90EE90">{token}</span>')
-            else:
-                html.append(token)
+        prev_was_entity = False
         
-        st.markdown(' '.join(html), unsafe_allow_html=True)
+        for token, pred in tokens_with_predictions:
+            # Add space between tokens, except after punctuation
+            if html and not prev_was_entity and not token.startswith(('.', ',', '!', '?', ':', ';')):
+                html.append(' ')
+            
+            if pred == 1:
+                # Check if continuing an entity
+                if prev_was_entity:
+                    html.append(token)
+                else:
+                    html.append(f'<span style="background-color: #90EE90">{token}')
+                prev_was_entity = True
+            else:
+                if prev_was_entity:
+                    html.append('</span>' + token)
+                else:
+                    html.append(token)
+                prev_was_entity = False
+        
+        # Close final span if needed
+        if prev_was_entity:
+            html.append('</span>')
+        
+        st.markdown(''.join(html), unsafe_allow_html=True)
         logger.info("Successfully displayed tagged text")
     except Exception as e:
         logger.error(f"Error displaying tagged text: {str(e)}")
@@ -170,6 +189,11 @@ def main():
         logger.error(error_msg)
         st.error(error_msg)
         model_loaded = False
+    except Exception as e:
+        error_msg = f"Error initializing model: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
+        model_loaded = False
     
     # Create tabs
     tab1, tab2 = st.tabs(["NER Inference", "Model Metrics"])
@@ -178,26 +202,47 @@ def main():
     with tab1:
         logger.info("Rendering NER Inference tab")
         st.header("Named Entity Recognition")
-        st.write("Enter a sentence to identify named entities.")
+        st.write("""
+        Enter text to identify named entities. The model will highlight named entities in green.
+        You can enter multiple sentences for analysis.
+        """)
         
         # Text input
         input_text = st.text_area(
             "Input Text",
-            value="Washington DC is the capital of United States of America",
-            height=100
+            value="Washington DC is the capital of United States of America. The University of California is located in Los Angeles.",
+            height=100,
+            help="Enter the text you want to analyze. Multiple sentences are supported."
+        )
+        
+        # Add batch processing option
+        process_as_batch = st.checkbox(
+            "Process as separate sentences",
+            value=False,
+            help="When checked, each line will be processed separately."
         )
         
         if st.button("Identify Named Entities") and model_loaded:
             logger.info(f"Processing input text: {input_text}")
             with st.spinner("Processing..."):
                 try:
-                    # Get predictions
-                    _, tokens_with_predictions = predictor.predict(input_text)
-                    
-                    # Display results
-                    st.subheader("Results")
-                    st.write("Named entities are highlighted in green:")
-                    display_tagged_text(tokens_with_predictions)
+                    if process_as_batch:
+                        # Split input into sentences and process
+                        sentences = [s.strip() for s in input_text.split('\n') if s.strip()]
+                        results = predictor.predict_batch(sentences)
+                        
+                        st.subheader("Results")
+                        for idx, result in enumerate(results, 1):
+                            st.write(f"**Sentence {idx}:**")
+                            display_tagged_text(result['predictions'])
+                            st.write("")  # Add spacing between sentences
+                    else:
+                        # Process as single text
+                        _, tokens_with_predictions = predictor.predict(input_text)
+                        
+                        st.subheader("Results")
+                        st.write("Named entities are highlighted in green:")
+                        display_tagged_text(tokens_with_predictions)
                     
                     # Display legend
                     st.markdown("---")
@@ -247,11 +292,36 @@ def main():
                         'Split': split_name.capitalize(),
                         'Precision': f"{split_metrics['precision']:.3f}",
                         'Recall': f"{split_metrics['recall']:.3f}",
-                        'F1 Score': f"{split_metrics['f1']:.3f}"
+                        'F1 Score': f"{split_metrics['f1']:.3f}",
+                        'Threshold': f"{split_metrics['threshold']:.3f}"
                     }
                     detailed_metrics.append(row)
                 
                 st.table(pd.DataFrame(detailed_metrics))
+                
+                # Display model information
+                st.subheader("Model Information")
+                st.markdown("""
+                This model uses a Linear Support Vector Classification (LinearSVC) architecture optimized for 
+                named entity recognition tasks. Key components include:
+                
+                - **Feature Engineering:**
+                    - Token-level features (capitalization, position, length)
+                    - Contextual features (surrounding words, patterns)
+                    - Entity-specific features (administrative units, connectors)
+                
+                - **Model Architecture:**
+                    - Feature vectorization with sparse matrices
+                    - Feature scaling for optimal performance
+                    - Linear SVC with balanced class weights
+                
+                - **Post-processing:**
+                    - Context-aware entity recognition
+                    - Capitalization pattern analysis
+                    - Entity sequence handling
+                    - Confidence-based decision thresholds
+                """)
+                
                 logger.info("Successfully displayed model metrics")
                 
             except Exception as e:

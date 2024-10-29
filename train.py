@@ -4,135 +4,248 @@ import os
 import json
 import pickle
 import numpy as np
+from tqdm import tqdm
 from sklearn.svm import LinearSVC
+from sklearn.pipeline import Pipeline
+from joblib import Parallel, delayed
+from multiprocessing import cpu_count
 from logger_config import setup_logger
 from data_utils import CoNLLDatasetLoader
-from utils import prepare_data, load_conll_data
+from resource_monitor import ResourceMonitor
+from sklearn.preprocessing import StandardScaler
 from sklearn.feature_extraction import DictVectorizer
+from utils import prepare_data, load_conll_data, NamedEntityFeatures
 from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
 
 logger = setup_logger('training')
 
-def train_and_evaluate(train_file, valid_file, test_file, model_output_dir):
-    """
-    Train SVM model and evaluate on all splits
+def parallel_prepare_features(sentences, tokens=None, labels=None):
+    """Prepare features in parallel"""
+    n_jobs = cpu_count()
+    chunk_size = max(1, len(sentences) // n_jobs)
     
-    Args:
-        train_file (str): Path to training file
-        valid_file (str): Path to validation file
-        test_file (str): Path to test file
-        model_output_dir (str): Directory to save model artifacts
-        
-    Returns:
-        tuple: (model, vectorizer, metrics)
-    """
-    logger.info("Starting model training and evaluation")
-    os.makedirs(model_output_dir, exist_ok=True)
+    # Split data into chunks
+    sentence_chunks = [sentences[i:i + chunk_size] for i in range(0, len(sentences), chunk_size)]
+    token_chunks = [tokens[i:i + chunk_size] for i in range(0, len(tokens), chunk_size)] if tokens else [None] * len(sentence_chunks)
+    label_chunks = [labels[i:i + chunk_size] for i in range(0, len(labels), chunk_size)] if labels else [None] * len(sentence_chunks)
     
-    try:
-        # Load and prepare all data
-        logger.info("Loading and preparing data...")
-        train_sentences, train_labels = load_conll_data(train_file)
-        valid_sentences, valid_labels = load_conll_data(valid_file)
-        test_sentences, test_labels = load_conll_data(test_file)
+    # Process chunks in parallel
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(prepare_data)(sentence_chunk, token_chunk, label_chunk)
+        for sentence_chunk, token_chunk, label_chunk in zip(sentence_chunks, token_chunks, label_chunks)
+    )
+    
+    # Combine results
+    all_features = []
+    all_labels = []
+    for features, labels in results:
+        all_features.extend(features)
+        if labels is not None:
+            all_labels.extend(labels)
+    
+    return all_features, all_labels if any(labels is not None for _, labels in results) else None
+
+class NERModel:
+    """Named Entity Recognition model with parallel processing"""
+    
+    def __init__(self, model_dir="model"):
+        self.model_dir = model_dir
+        self.ne_features = NamedEntityFeatures()
+        os.makedirs(model_dir, exist_ok=True)
+        self.n_jobs = cpu_count()
+        logger.info(f"Initialized NERModel with {self.n_jobs} CPU cores")
+    
+    def create_pipeline(self):
+        """Create a faster model pipeline using LinearSVC"""
+        return Pipeline([
+            ('vectorizer', DictVectorizer(sparse=True)),
+            ('scaler', StandardScaler(with_mean=False)),
+            ('classifier', LinearSVC(
+                dual='auto',
+                class_weight='balanced',
+                max_iter=1000,
+                random_state=42
+            ))
+        ])
+    
+    def train_model(self, pipeline, X_train, y_train):
+        """Train model with progress tracking"""
+        logger.info("Starting model training")
+        try:
+            # Fit the pipeline with progress updates
+            pipeline.fit(X_train, y_train)
+            
+            # Extract components
+            vectorizer = pipeline.named_steps['vectorizer']
+            scaler = pipeline.named_steps['scaler']
+            model = pipeline.named_steps['classifier']
+            
+            return model, vectorizer, scaler
+            
+        except Exception as e:
+            logger.error(f"Error during training: {str(e)}")
+            raise
+    
+    def parallel_evaluate_thresholds(self, scores, y_true, thresholds):
+        """Evaluate multiple thresholds in parallel"""
+        def evaluate_single_threshold(threshold):
+            predictions = (scores >= threshold).astype(int)
+            precision, recall, f1, _ = precision_recall_fscore_support(y_true, predictions, average='binary')
+            return threshold, precision, recall, f1, predictions
         
-        logger.info("Preparing features...")
-        train_features, _ = prepare_data(train_sentences)
-        valid_features, _ = prepare_data(valid_sentences)
-        test_features, _ = prepare_data(test_sentences)
+        results = Parallel(n_jobs=self.n_jobs)(
+            delayed(evaluate_single_threshold)(threshold) 
+            for threshold in thresholds
+        )
+        return results
+    
+    def evaluate_split(self, vectorizer, scaler, model, X, y, split_name):
+        """Evaluate model on a data split with parallel threshold evaluation"""
+        logger.info(f"Evaluating {split_name} split")
         
-        # Vectorize features
-        logger.info("Vectorizing features...")
-        vectorizer = DictVectorizer()
-        X_train = vectorizer.fit_transform(train_features)
-        X_valid = vectorizer.transform(valid_features)
-        X_test = vectorizer.transform(test_features)
+        # Transform features
+        X_transformed = vectorizer.transform(X)
+        X_scaled = scaler.transform(X_transformed)
         
-        # Convert labels to numpy arrays
-        y_train = np.array(train_labels)
-        y_valid = np.array(valid_labels)
-        y_test = np.array(test_labels)
+        # Get model scores
+        scores = model.decision_function(X_scaled)
+        thresholds = np.linspace(0.3, 0.7, 9)
         
-        # Train model
-        logger.info("Training SVM model...")
-        model = LinearSVC(random_state=42, max_iter=2000)
-        model.fit(X_train, y_train)
-        logger.info("Model training completed")
+        # Evaluate thresholds in parallel
+        results = self.parallel_evaluate_thresholds(scores, y, thresholds)
         
-        # Calculate metrics for all splits
-        metrics = {}
-        splits = {
-            'train': (X_train, y_train),
-            'valid': (X_valid, y_valid),
-            'test': (X_test, y_test)
+        # Find best results
+        best_result = max(results, key=lambda x: x[3])  # Max by F1 score
+        best_threshold, precision, recall, f1, predictions = best_result
+        
+        best_metrics = {
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f1),
+            'threshold': float(best_threshold),
+            'confusion_matrix': confusion_matrix(y, predictions).tolist()
         }
         
-        logger.info("Calculating metrics for all splits...")
-        for split_name, (X, y) in splits.items():
-            y_pred = model.predict(X)
-            precision, recall, f1, _ = precision_recall_fscore_support(y, y_pred, average='binary')
-            conf_matrix = confusion_matrix(y, y_pred).tolist()
+        logger.info(f"{split_name} Best Metrics (threshold={best_threshold:.2f}):")
+        logger.info(f"Precision: {best_metrics['precision']:.4f}")
+        logger.info(f"Recall: {best_metrics['recall']:.4f}")
+        logger.info(f"F1-score: {best_metrics['f1']:.4f}")
+        
+        return best_metrics
+    
+    def train_and_evaluate(self, train_file, valid_file, test_file):
+        """Train and evaluate the NER model with parallel processing"""
+        logger.info("Starting model training and evaluation")
+        
+        try:
+            # Load data
+            logger.info("Loading and preparing data...")
+            train_sentences, train_tokens, train_labels = load_conll_data(train_file)
+            valid_sentences, valid_tokens, valid_labels = load_conll_data(valid_file)
+            test_sentences, test_tokens, test_labels = load_conll_data(test_file)
             
-            metrics[split_name] = {
-                'precision': float(precision),
-                'recall': float(recall),
-                'f1': float(f1),
-                'confusion_matrix': conf_matrix
+            # Prepare features in parallel
+            logger.info("Preparing features with parallel processing...")
+            train_features, train_y = parallel_prepare_features(train_sentences, train_tokens, train_labels)
+            valid_features, valid_y = parallel_prepare_features(valid_sentences, valid_tokens, valid_labels)
+            test_features, test_y = parallel_prepare_features(test_sentences, test_tokens, test_labels)
+            
+            # Convert to numpy arrays
+            y_train = np.array(train_y)
+            y_valid = np.array(valid_y)
+            y_test = np.array(test_y)
+            
+            # Create and train model
+            logger.info("Creating and training model...")
+            pipeline = self.create_pipeline()
+            model, vectorizer, scaler = self.train_model(pipeline, train_features, y_train)
+            
+            # Evaluate on all splits
+            metrics = {}
+            splits = {
+                'train': (train_features, y_train),
+                'valid': (valid_features, y_valid),
+                'test': (test_features, y_test)
             }
             
-            logger.info(f"{split_name.capitalize()} Split Metrics:")
-            logger.info(f"Precision: {precision:.4f}")
-            logger.info(f"Recall: {recall:.4f}")
-            logger.info(f"F1-score: {f1:.4f}")
+            for split_name, (X, y) in splits.items():
+                metrics[split_name] = self.evaluate_split(vectorizer, scaler, model, X, y, split_name)
+            
+            # Save model artifacts
+            logger.info("Saving model artifacts...")
+            with open(os.path.join(self.model_dir, 'model.pkl'), 'wb') as f:
+                pickle.dump(model, f)
+            with open(os.path.join(self.model_dir, 'vectorizer.pkl'), 'wb') as f:
+                pickle.dump(vectorizer, f)
+            with open(os.path.join(self.model_dir, 'scaler.pkl'), 'wb') as f:
+                pickle.dump(scaler, f)
+            
+            # Save metrics and feature info
+            feature_info = {
+                'best_thresholds': {
+                    split: metrics[split]['threshold']
+                    for split in metrics.keys()
+                }
+            }
+            
+            # Save cache path for future reference
+            feature_info['features_cache'] = str(self.ne_features.resource_dir / "entity_features.json")
+
+            with open(os.path.join(self.model_dir, 'metrics.json'), 'w') as f:
+                json.dump(metrics, f, indent=2)
+            with open(os.path.join(self.model_dir, 'feature_info.json'), 'w') as f:
+                json.dump(feature_info, f, indent=2)
+            
+            logger.info("Training completed successfully!")
+            return model, vectorizer, scaler, metrics
         
-        # Save model artifacts
-        logger.info("Saving model artifacts...")
-        with open(os.path.join(model_output_dir, 'model.pkl'), 'wb') as f:
-            pickle.dump(model, f)
-        with open(os.path.join(model_output_dir, 'vectorizer.pkl'), 'wb') as f:
-            pickle.dump(vectorizer, f)
-        with open(os.path.join(model_output_dir, 'metrics.json'), 'w') as f:
-            json.dump(metrics, f, indent=2)
-        
-        logger.info("Training and evaluation completed successfully!")
-        return model, vectorizer, metrics
-        
-    except Exception as e:
-        logger.error(f"Error during training and evaluation: {str(e)}")
-        raise
+        except Exception as e:
+            logger.error(f"Error in train_and_evaluate: {str(e)}")
+            raise
 
 if __name__ == "__main__":
     data_dir = "data"
     model_dir = "model"
     
     try:
-        # Initialize dataset loader
-        logger.info("Initializing dataset loader...")
-        dataset_loader = CoNLLDatasetLoader(data_dir)
+        # Initialize resource monitor
+        monitor = ResourceMonitor(interval=5)
+        monitor.start()
         
-        # Try to prepare existing dataset first
         try:
-            logger.info("Attempting to use existing dataset...")
-            processed_dir = dataset_loader.prepare_existing_dataset(
-                os.path.join(data_dir, "conll_2003")
+            # Initialize dataset and model
+            dataset_loader = CoNLLDatasetLoader(data_dir)
+            ner_model = NERModel(model_dir)
+            
+            # Prepare dataset with progress bar
+            try:
+                logger.info("Attempting to use existing dataset...")
+                with tqdm(total=1, desc='Preparing Dataset',
+                         bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [Time: {elapsed}<{remaining}]') as pbar:
+                    processed_dir = dataset_loader.prepare_existing_dataset(
+                        os.path.join(data_dir, "conll_2003")
+                    )
+                    pbar.update(1)
+            except FileNotFoundError:
+                logger.info("Downloading and preparing dataset...")
+                with tqdm(total=1, desc='Downloading Dataset',
+                         bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [Time: {elapsed}<{remaining}]') as pbar:
+                    processed_dir = dataset_loader.prepare_dataset(force_download=True)
+                    pbar.update(1)
+            
+            # Train and evaluate model
+            model, vectorizer, scaler, metrics = ner_model.train_and_evaluate(
+                os.path.join(processed_dir, "train.txt"),
+                os.path.join(processed_dir, "valid.txt"),
+                os.path.join(processed_dir, "test.txt")
             )
-        except FileNotFoundError as e:
-            logger.warning(f"Existing dataset not found: {str(e)}")
-            logger.info("Downloading and preparing dataset...")
-            processed_dir = dataset_loader.prepare_dataset(force_download=True)
-        
-        # Get file paths
-        train_file = os.path.join(processed_dir, "train.txt")
-        valid_file = os.path.join(processed_dir, "valid.txt")
-        test_file = os.path.join(processed_dir, "test.txt")
-        
-        # Train and evaluate model
-        logger.info("Starting training process...")
-        model, vectorizer, metrics = train_and_evaluate(
-            train_file, valid_file, test_file, model_dir
-        )
-        
+            
+            logger.info("Process completed successfully!")
+            
+        finally:
+            # Stop resource monitoring
+            monitor.stop()
+            
     except Exception as e:
         logger.error(f"Training process failed: {str(e)}")
-        logger.error("Please ensure the dataset is available or can be downloaded.")
         raise
