@@ -190,18 +190,22 @@ def preprocess_sentence(sentence, original_tokens=None):
         logger.error(f"Error preprocessing sentence: {str(e)}")
         raise
 
-def extract_features(tokens, i, preprocessed_tokens, ne_features):
-    """Extract comprehensive features for NER"""
+def extract_features(tokens, i, preprocessed_tokens, pos_tags, ne_features):
+    """Extract comprehensive features for NER including POS tags"""
     try:
         features = {}
         token = tokens[i]
         preprocessed_token = preprocessed_tokens[i]
+        pos_tag = pos_tags[i]
         
         # Basic features
         features.update(_get_basic_features(token, preprocessed_token))
         
+        # POS tag features
+        features.update(_get_pos_features(pos_tags, i))
+        
         # Position and context features
-        features.update(_get_position_features(tokens, preprocessed_tokens, i))
+        features.update(_get_position_features(tokens, preprocessed_tokens, i, pos_tags))
         
         # Entity pattern features
         features.update(_get_entity_pattern_features(tokens, preprocessed_tokens, i, ne_features))
@@ -216,6 +220,40 @@ def extract_features(tokens, i, preprocessed_tokens, ne_features):
     except Exception as e:
         logger.error(f"Error extracting features: {str(e)}")
         raise
+    
+def _get_pos_features(pos_tags, i):
+    """Extract POS tag-related features"""
+    features = {
+        'pos': pos_tags[i],
+        'is_noun': pos_tags[i].startswith('NN'),
+        'is_proper_noun': pos_tags[i] in {'NNP', 'NNPS'},
+        'is_verb': pos_tags[i].startswith('VB'),
+        'is_adjective': pos_tags[i].startswith('JJ'),
+        'is_adverb': pos_tags[i].startswith('RB'),
+        'is_determiner': pos_tags[i].startswith('DT'),
+        'is_preposition': pos_tags[i].startswith('IN'),
+    }
+    
+    # POS tag sequence features
+    if i > 0:
+        features['prev_pos'] = pos_tags[i-1]
+        features['prev_is_proper_noun'] = pos_tags[i-1] in {'NNP', 'NNPS'}
+        if i > 1:
+            features['prev_prev_pos'] = pos_tags[i-2]
+    
+    if i < len(pos_tags) - 1:
+        features['next_pos'] = pos_tags[i+1]
+        features['next_is_proper_noun'] = pos_tags[i+1] in {'NNP', 'NNPS'}
+        if i < len(pos_tags) - 2:
+            features['next_next_pos'] = pos_tags[i+2]
+    
+    # Add POS bigram features
+    if i > 0:
+        features['pos_bigram_prev'] = f"{pos_tags[i-1]}_{pos_tags[i]}"
+    if i < len(pos_tags) - 1:
+        features['pos_bigram_next'] = f"{pos_tags[i]}_{pos_tags[i+1]}"
+    
+    return features
 
 def _get_basic_features(token, preprocessed_token):
     """Extract basic token features"""
@@ -233,7 +271,7 @@ def _get_basic_features(token, preprocessed_token):
         'has_roman_numeral': bool(re.match(r'^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$', token.upper())),
     }
 
-def _get_position_features(tokens, preprocessed_tokens, i):
+def _get_position_features(tokens, preprocessed_tokens, i, pos_tags=None):
     """Extract position and context features"""
     features = {
         'is_first_token': i == 0,
@@ -249,8 +287,14 @@ def _get_position_features(tokens, preprocessed_tokens, i):
             'prev_is_period': tokens[i-1] == '.',
             'prev_length': len(tokens[i-1])
         })
+        if pos_tags:
+            features['prev_pos'] = pos_tags[i-1]
+            features['prev_is_proper_noun'] = pos_tags[i-1] in {'NNP', 'NNPS'}
+            
         if i > 1:
             features['prev_prev_token'] = preprocessed_tokens[i-2]
+            if pos_tags:
+                features['prev_prev_pos'] = pos_tags[i-2]
     
     # Next token features
     if i < len(tokens) - 1:
@@ -260,8 +304,14 @@ def _get_position_features(tokens, preprocessed_tokens, i):
             'next_is_period': tokens[i+1] == '.',
             'next_length': len(tokens[i+1])
         })
+        if pos_tags:
+            features['next_pos'] = pos_tags[i+1]
+            features['next_is_proper_noun'] = pos_tags[i+1] in {'NNP', 'NNPS'}
+            
         if i < len(tokens) - 2:
             features['next_next_token'] = preprocessed_tokens[i+2]
+            if pos_tags:
+                features['next_next_pos'] = pos_tags[i+2]
     
     return features
 
@@ -325,7 +375,7 @@ def _get_ngram_features(token):
     
     return features
 
-def prepare_data(sentences, original_tokens=None, sentence_labels=None):
+def prepare_data(sentences, tokens=None, pos_tags=None, labels=None):
     """Prepare features maintaining original tokenization if available"""
     logger.info(f"Preparing features for {len(sentences)} sentences")
     try:
@@ -335,44 +385,46 @@ def prepare_data(sentences, original_tokens=None, sentence_labels=None):
         
         for idx, sentence in enumerate(sentences):
             # Get tokens if not provided
-            if original_tokens is None:
-                tokens, preprocessed_tokens = preprocess_sentence(sentence)
+            if tokens is None:
+                curr_tokens, preprocessed_tokens = preprocess_sentence(sentence)
+                curr_pos_tags = ['UNK'] * len(curr_tokens)  # Default POS tag
             else:
-                tokens = original_tokens[idx]
-                _, preprocessed_tokens = preprocess_sentence(sentence, tokens)
+                curr_tokens = tokens[idx]
+                curr_pos_tags = pos_tags[idx] if pos_tags else ['UNK'] * len(curr_tokens)
+                _, preprocessed_tokens = preprocess_sentence(sentence, curr_tokens)
             
             # Extract features for each token
             sentence_features = []
-            for i in range(len(tokens)):
+            for i in range(len(curr_tokens)):
                 features = extract_features(
-                    tokens, i, preprocessed_tokens, ne_features)
+                    curr_tokens, i, preprocessed_tokens, curr_pos_tags, ne_features)
                 sentence_features.append(features)
                 
-                # Add labels if provided
-                if sentence_labels is not None:
-                    all_labels.append(sentence_labels[idx][i])
+                if labels is not None:
+                    all_labels.append(labels[idx][i])
             
             all_features.extend(sentence_features)
         
-        # Final verification if labels are provided
-        if sentence_labels is not None and len(all_features) != len(all_labels):
-            raise ValueError(f"Final mismatch: {len(all_features)} features, {len(all_labels)} labels")
+        if labels is not None and len(all_features) != len(all_labels):
+            raise ValueError(f"Feature-label mismatch: {len(all_features)} features, {len(all_labels)} labels")
         
         logger.info(f"Successfully prepared {len(all_features)} feature sets")
-        return all_features, all_labels if sentence_labels is not None else None
+        return all_features, all_labels if labels is not None else None
     
     except Exception as e:
         logger.error(f"Error preparing data: {str(e)}")
         raise
 
 def load_conll_data(file_path):
-    """Load and process CoNLL format data maintaining original tokenization"""
+    """Load and process CoNLL format data with POS tags"""
     logger.info(f"Loading CoNLL data from: {file_path}")
     all_sentences = []
     all_tokens = []
+    all_pos_tags = []
     all_labels = []
     current_sentence = []
     current_tokens = []
+    current_pos_tags = []
     current_labels = []
     
     try:
@@ -380,29 +432,30 @@ def load_conll_data(file_path):
             for line in f:
                 line = line.strip()
                 if line:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        token = parts[0]
-                        tag = parts[1]
-                        current_tokens.append(token)
-                        current_sentence.append(token)
-                        current_labels.append(1 if tag.startswith(('B-', 'I-')) else 0)
+                    token, pos_tag, tag = line.split('\t')
+                    current_tokens.append(token)
+                    current_pos_tags.append(pos_tag)
+                    current_sentence.append(token)
+                    current_labels.append(1 if tag.startswith(('B-', 'I-')) else 0)
                 elif current_sentence:  # End of sentence
                     all_sentences.append(' '.join(current_sentence))
                     all_tokens.append(current_tokens)
+                    all_pos_tags.append(current_pos_tags)
                     all_labels.append(current_labels)
                     current_sentence = []
                     current_tokens = []
+                    current_pos_tags = []
                     current_labels = []
         
         # Handle last sentence if exists
         if current_sentence:
             all_sentences.append(' '.join(current_sentence))
             all_tokens.append(current_tokens)
+            all_pos_tags.append(current_pos_tags)
             all_labels.append(current_labels)
         
         logger.info(f"Loaded {len(all_sentences)} sentences")
-        return all_sentences, all_tokens, all_labels
+        return all_sentences, all_tokens, all_pos_tags, all_labels
     
     except Exception as e:
         logger.error(f"Error loading CoNLL data: {str(e)}")

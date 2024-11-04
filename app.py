@@ -16,19 +16,87 @@ logger = setup_logger('streamlit_app')
 st.set_page_config(
     page_title="Named Entity Recognition System",
     page_icon="🏷️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-def load_metrics(model_dir):
-    """
-    Load model metrics from JSON file
+# Add custom CSS
+st.markdown("""
+<style>
+    /* ... (existing styles) ... */
     
-    Args:
-        model_dir (str): Directory containing metrics file
-        
-    Returns:
-        dict: Metrics dictionary or None if file not found
-    """
+    /* Input text container */
+    .input-container {
+        background-color: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    
+    /* Entity text styling */
+    .entity-text {
+        font-family: 'system-ui', sans-serif;
+        font-size: 1.1em;
+        line-height: 1.8;
+        color: #ffffff;
+    }
+    
+    /* Entity highlight */
+    .entity-highlight {
+        background-color: #4CAF50;
+        color: #000;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin: 0 2px;
+    }
+    
+    /* POS tag styling */
+    .pos-tag {
+        color: #888;
+        font-size: 0.7em;
+        position: relative;
+        top: -0.5em;
+        margin-left: 2px;
+    }
+    
+    /* Entities summary box */
+    .entities-box {
+        background-color: #2d2d2d;
+        border: 1px solid #444;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 15px 0;
+    }
+    
+    .entities-title {
+        color: #ffffff;
+        font-size: 1.1em;
+        margin-bottom: 10px;
+        font-weight: 500;
+    }
+    
+    .entity-chip {
+        display: inline-block;
+        background-color: #4CAF50;
+        color: #000;
+        padding: 5px 10px;
+        border-radius: 15px;
+        margin: 4px;
+        font-size: 0.9em;
+    }
+    
+    .entity-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def load_metrics(model_dir):
+    """Load model metrics from JSON file"""
     logger.info(f"Loading metrics from: {model_dir}")
     metrics_path = os.path.join(model_dir, 'metrics.json')
     
@@ -46,18 +114,9 @@ def load_metrics(model_dir):
         return None
 
 def plot_metrics_comparison(metrics):
-    """
-    Create a bar plot comparing metrics across splits
-    
-    Args:
-        metrics (dict): Dictionary containing metrics for each split
-        
-    Returns:
-        plotly.graph_objects.Figure: Comparison plot
-    """
+    """Create a bar plot comparing metrics across splits"""
     logger.info("Generating metrics comparison plot")
     try:
-        # Prepare data for plotting
         data = []
         for split in metrics.keys():
             for metric in ['precision', 'recall', 'f1']:
@@ -83,27 +142,18 @@ def plot_metrics_comparison(metrics):
         fig.update_layout(
             yaxis_range=[0, 1],
             plot_bgcolor='white',
-            yaxis_gridcolor='lightgray'
+            yaxis_gridcolor='lightgray',
+            height=500
         )
         
-        logger.info("Successfully generated metrics comparison plot")
         return fig
     except Exception as e:
-        logger.error(f"Error generating metrics comparison plot: {str(e)}")
+        logger.error(f"Error generating metrics plot: {str(e)}")
         raise
 
 def plot_confusion_matrix(conf_matrix, split_name):
-    """
-    Create a heatmap of the confusion matrix
-    
-    Args:
-        conf_matrix (list): 2D list containing confusion matrix values
-        split_name (str): Name of the dataset split
-        
-    Returns:
-        plotly.graph_objects.Figure: Confusion matrix heatmap
-    """
-    logger.info(f"Generating confusion matrix plot for {split_name} split")
+    """Create a heatmap of the confusion matrix"""
+    logger.info(f"Generating confusion matrix for {split_name} split")
     try:
         labels = ['Non-Entity', 'Named Entity']
         
@@ -126,52 +176,212 @@ def plot_confusion_matrix(conf_matrix, split_name):
             height=400
         )
         
-        logger.info(f"Successfully generated confusion matrix for {split_name} split")
         return fig
     except Exception as e:
-        logger.error(f"Error generating confusion matrix plot: {str(e)}")
+        logger.error(f"Error generating confusion matrix: {str(e)}")
         raise
 
-def display_tagged_text(tokens_with_predictions):
-    """
-    Display color-coded text based on predictions
-    
-    Args:
-        tokens_with_predictions (list): List of (token, prediction) pairs
-    """
-    logger.info("Displaying tagged text")
-    try:
-        html = []
-        prev_was_entity = False
+def display_tagged_text(result, show_pos_tags=False):
+    """Display tagged text with improved styling"""
+    with st.expander(f"Input: {result['sentence']}", expanded=True):
+        # Create the input text container
+        st.markdown('<div class="input-container">', unsafe_allow_html=True)
         
-        for token, pred in tokens_with_predictions:
-            # Add space between tokens, except after punctuation
-            if html and not prev_was_entity and not token.startswith(('.', ',', '!', '?', ':', ';')):
-                html.append(' ')
-            
-            if pred == 1:
-                # Check if continuing an entity
-                if prev_was_entity:
-                    html.append(token)
-                else:
-                    html.append(f'<span style="background-color: #90EE90">{token}')
-                prev_was_entity = True
+        # Format the text with entities and POS tags
+        html_parts = []
+        tokens = result['sentence'].split()
+        predictions = [pred for _, pred in result['predictions']]
+        pos_tags = result['pos_tags']
+        
+        for i, (token, is_entity, pos_tag) in enumerate(zip(tokens, predictions, pos_tags)):
+            if is_entity:
+                html_parts.append(
+                    f'<span class="entity-highlight">{token}'
+                    f'<span class="pos-tag">{pos_tag}</span></span>'
+                )
             else:
-                if prev_was_entity:
-                    html.append('</span>' + token)
-                else:
-                    html.append(token)
-                prev_was_entity = False
+                html_parts.append(
+                    f'{token}<span class="pos-tag">{pos_tag}</span>'
+                )
+            
+            # Add space between tokens
+            if i < len(tokens) - 1 and not tokens[i+1] in {',', '.', '!', '?', ':', ';'}:
+                html_parts.append(' ')
         
-        # Close final span if needed
-        if prev_was_entity:
-            html.append('</span>')
+        # Display the formatted text
+        st.markdown(
+            f'<div class="entity-text">{"".join(html_parts)}</div>',
+            unsafe_allow_html=True
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        st.markdown(''.join(html), unsafe_allow_html=True)
-        logger.info("Successfully displayed tagged text")
+        # Show entity summary
+        entities = [token for token, pred in result['predictions'] if pred == 1]
+        if entities:
+            st.markdown(
+                '<div class="entities-box">'
+                '<div class="entities-title">Identified Entities</div>'
+                '<div class="entity-container">' +
+                ''.join([f'<span class="entity-chip">{entity}</span>' 
+                        for entity in entities]) +
+                '</div></div>',
+                unsafe_allow_html=True
+            )
+
+def process_text_input(input_text, predictor, as_batch=False):
+    """Process input text and display results"""
+    try:
+        with st.spinner("Processing..."):
+            if as_batch:
+                sentences = [s.strip() for s in input_text.split('\n') if s.strip()]
+                results = predictor.predict_batch(sentences)
+                
+                st.subheader("Results")
+                for result in results:
+                    display_tagged_text(result, True)
+            else:
+                results = predictor.predict_batch([input_text])
+                
+                st.subheader("Results")
+                display_tagged_text(results[0], True)
+            
+            # Display legend
+            st.markdown("""
+            <div class="legend-box">
+                <h4>Legend:</h4>
+                <div style="margin: 0.5em 0;">
+                    <span class="entity-highlight">Highlighted text</span> - Named Entity
+                </div>
+                <div style="margin: 0.5em 0;">
+                    <span class="pos-tag">Small text above</span> - Part of Speech (POS) Tag
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
     except Exception as e:
-        logger.error(f"Error displaying tagged text: {str(e)}")
-        raise
+        error_msg = f"Error processing text: {str(e)}"
+        logger.error(error_msg)
+        st.error(error_msg)
+
+def display_test_results(results, show_pos_tags=False):
+    """Display test results with enhanced visualization"""
+    if not results:
+        return
+    
+    for idx, result in enumerate(results, 1):
+        with st.container():
+            st.markdown(
+                f'<div class="result-container">',
+                unsafe_allow_html=True
+            )
+            st.markdown(f"**Example {idx}**")
+            display_tagged_text(result, show_pos_tags)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+def display_metrics_tab(metrics):
+    """Display model metrics tab content"""
+    if metrics:
+        try:
+            # Display overall metrics
+            st.subheader("Performance Overview")
+            metrics_fig = plot_metrics_comparison(metrics)
+            st.plotly_chart(metrics_fig, use_container_width=True)
+            
+            # Display confusion matrices
+            st.subheader("Confusion Matrices")
+            cols = st.columns(3)
+            
+            for idx, (split_name, split_metrics) in enumerate(metrics.items()):
+                with cols[idx]:
+                    st.write(f"**{split_name.capitalize()} Split**")
+                    conf_matrix_fig = plot_confusion_matrix(
+                        split_metrics['confusion_matrix'],
+                        split_name.capitalize()
+                    )
+                    st.plotly_chart(conf_matrix_fig)
+            
+            # Display detailed metrics table
+            st.subheader("Detailed Metrics")
+            detailed_metrics = []
+            for split_name, split_metrics in metrics.items():
+                row = {
+                    'Split': split_name.capitalize(),
+                    'Precision': f"{split_metrics['precision']:.3f}",
+                    'Recall': f"{split_metrics['recall']:.3f}",
+                    'F1 Score': f"{split_metrics['f1']:.3f}",
+                    'Threshold': f"{split_metrics['threshold']:.3f}"
+                }
+                detailed_metrics.append(row)
+            
+            st.table(pd.DataFrame(detailed_metrics))
+            
+        except Exception as e:
+            error_msg = f"Error displaying metrics: {str(e)}"
+            logger.error(error_msg)
+            st.error(error_msg)
+    else:
+        st.warning("No metrics found. Train the model first to see performance metrics.")
+
+def display_test_examples_tab(predictor, test_categories):
+    """Display test examples tab content"""
+    st.header("Test Examples")
+    
+    category = st.selectbox(
+        "Select Example Category",
+        options=list(test_categories.keys()),
+        help="Choose a category of test examples to analyze"
+    )
+    
+    # Show category description
+    st.markdown(f"""
+    <div class="category-description">
+        <strong>{category}</strong><br>
+        Number of examples: {len(test_categories[category])}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Process button with options
+    col1, col2 = st.columns(2)
+    with col1:
+        show_pos = st.checkbox("Show POS Tags", value=True)
+    
+    if st.button("Process Examples"):
+        with st.spinner("Processing test examples..."):
+            test_sentences = test_categories[category]
+            results = predictor.predict_batch(test_sentences)
+            
+            if results:
+                # Calculate category statistics
+                total_entities = sum(len([token for token, pred in r['predictions'] if pred == 1]) 
+                                   for r in results)
+                avg_entities = total_entities / len(results)
+                
+                # Display statistics
+                st.markdown(f"""
+                <div class="statistics-box">
+                    <strong>Category Statistics:</strong><br>
+                    Total Entities: {total_entities}<br>
+                    Average Entities per Sentence: {avg_entities:.2f}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Display results
+                display_test_results(results, show_pos)
+                
+                # Add download option
+                results_df = pd.DataFrame([{
+                    'Input': r['sentence'],
+                    'Tagged Output': r['tagged_text'],
+                    'POS Tags': ' | '.join([f"{t}({p})" for t, p in zip(r['sentence'].split(), r['pos_tags'])]),
+                    'Entities': ', '.join([token for token, pred in r['predictions'] if pred == 1])
+                } for r in results])
+                
+                st.download_button(
+                    label="Download Results",
+                    data=results_df.to_csv(index=False),
+                    file_name=f"ner_results_{category.lower().replace(' ', '_')}.csv",
+                    mime="text/csv"
+                )
 
 def main():
     """Main function for the Streamlit application"""
@@ -183,34 +393,31 @@ def main():
     try:
         predictor = NERPredictor("model")
         model_loaded = True
+        # Get test categories from predictor
+        TEST_CATEGORIES, _ = predictor.get_test_cases()
         logger.info("Successfully initialized NER predictor")
-    except FileNotFoundError:
-        error_msg = "Model files not found. Please train the model first."
-        logger.error(error_msg)
-        st.error(error_msg)
-        model_loaded = False
     except Exception as e:
         error_msg = f"Error initializing model: {str(e)}"
         logger.error(error_msg)
         st.error(error_msg)
         model_loaded = False
+        TEST_CATEGORIES = {}
     
     # Create tabs
-    tab1, tab2 = st.tabs(["NER Inference", "Model Metrics"])
+    tab1, tab2, tab3 = st.tabs(["NER Inference", "Model Metrics", "Test Examples"])
     
     # Tab 1: NER Inference
     with tab1:
-        logger.info("Rendering NER Inference tab")
         st.header("Named Entity Recognition")
         st.write("""
-        Enter text to identify named entities. The model will highlight named entities in green.
-        You can enter multiple sentences for analysis.
+        Enter text to identify named entities. The system will highlight named entities 
+        and show their POS (Part of Speech) tags.
         """)
         
         # Text input
         input_text = st.text_area(
             "Input Text",
-            value="Washington DC is the capital of United States of America. The University of California is located in Los Angeles.",
+            value="Washington DC is the capital of United States of America.",
             height=100,
             help="Enter the text you want to analyze. Multiple sentences are supported."
         )
@@ -223,114 +430,20 @@ def main():
         )
         
         if st.button("Identify Named Entities") and model_loaded:
-            logger.info(f"Processing input text: {input_text}")
-            with st.spinner("Processing..."):
-                try:
-                    if process_as_batch:
-                        # Split input into sentences and process
-                        sentences = [s.strip() for s in input_text.split('\n') if s.strip()]
-                        results = predictor.predict_batch(sentences)
-                        
-                        st.subheader("Results")
-                        for idx, result in enumerate(results, 1):
-                            st.write(f"**Sentence {idx}:**")
-                            display_tagged_text(result['predictions'])
-                            st.write("")  # Add spacing between sentences
-                    else:
-                        # Process as single text
-                        _, tokens_with_predictions = predictor.predict(input_text)
-                        
-                        st.subheader("Results")
-                        st.write("Named entities are highlighted in green:")
-                        display_tagged_text(tokens_with_predictions)
-                    
-                    # Display legend
-                    st.markdown("---")
-                    st.markdown("""
-                    **Legend:**
-                    - <span style='background-color: #90EE90'>Highlighted text</span>: Named Entity
-                    - Regular text: Non-Entity
-                    """, unsafe_allow_html=True)
-                    
-                    logger.info("Successfully processed and displayed results")
-                except Exception as e:
-                    error_msg = f"Error processing text: {str(e)}"
-                    logger.error(error_msg)
-                    st.error(error_msg)
+            process_text_input(input_text, predictor, process_as_batch)
     
     # Tab 2: Model Metrics
     with tab2:
-        logger.info("Rendering Model Metrics tab")
         st.header("Model Performance Metrics")
-        
         metrics = load_metrics("model")
-        if metrics:
-            try:
-                # Display overall metrics
-                st.subheader("Performance Overview")
-                metrics_fig = plot_metrics_comparison(metrics)
-                st.plotly_chart(metrics_fig, use_container_width=True)
-                
-                # Display confusion matrices
-                st.subheader("Confusion Matrices")
-                cols = st.columns(3)
-                
-                for idx, (split_name, split_metrics) in enumerate(metrics.items()):
-                    with cols[idx]:
-                        st.write(f"**{split_name.capitalize()} Split**")
-                        conf_matrix_fig = plot_confusion_matrix(
-                            split_metrics['confusion_matrix'],
-                            split_name.capitalize()
-                        )
-                        st.plotly_chart(conf_matrix_fig)
-                
-                # Display detailed metrics table
-                st.subheader("Detailed Metrics")
-                detailed_metrics = []
-                for split_name, split_metrics in metrics.items():
-                    row = {
-                        'Split': split_name.capitalize(),
-                        'Precision': f"{split_metrics['precision']:.3f}",
-                        'Recall': f"{split_metrics['recall']:.3f}",
-                        'F1 Score': f"{split_metrics['f1']:.3f}",
-                        'Threshold': f"{split_metrics['threshold']:.3f}"
-                    }
-                    detailed_metrics.append(row)
-                
-                st.table(pd.DataFrame(detailed_metrics))
-                
-                # Display model information
-                st.subheader("Model Information")
-                st.markdown("""
-                This model uses a Linear Support Vector Classification (LinearSVC) architecture optimized for 
-                named entity recognition tasks. Key components include:
-                
-                - **Feature Engineering:**
-                    - Token-level features (capitalization, position, length)
-                    - Contextual features (surrounding words, patterns)
-                    - Entity-specific features (administrative units, connectors)
-                
-                - **Model Architecture:**
-                    - Feature vectorization with sparse matrices
-                    - Feature scaling for optimal performance
-                    - Linear SVC with balanced class weights
-                
-                - **Post-processing:**
-                    - Context-aware entity recognition
-                    - Capitalization pattern analysis
-                    - Entity sequence handling
-                    - Confidence-based decision thresholds
-                """)
-                
-                logger.info("Successfully displayed model metrics")
-                
-            except Exception as e:
-                error_msg = f"Error displaying metrics: {str(e)}"
-                logger.error(error_msg)
-                st.error(error_msg)
+        display_metrics_tab(metrics)
+    
+    # Tab 3: Test Examples
+    with tab3:
+        if model_loaded and TEST_CATEGORIES:
+            display_test_examples_tab(predictor, TEST_CATEGORIES)
         else:
-            logger.warning("No metrics found")
-            st.error("No metrics found. Please train the model first.")
+            st.error("Model not loaded or no test cases available.")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,100 @@
+{
+    "Person Names with Titles": [
+        "Prime Minister Narendra Modi addressed the nation",
+        "President Joe Biden visited Europe last week",
+        "Dr. Abdul Kalam was a renowned scientist",
+        "Chief Justice John Roberts presided over the court",
+        "Professor Alan Turing developed the Turing machine"
+    ],
+    "Organizations with Various Patterns": [
+        "Microsoft Corporation announced new software",
+        "Indian Institute of Technology Bombay conducts research",
+        "The World Health Organization issued guidelines",
+        "United Nations Development Programme started a new initiative",
+        "Harvard Business School offers MBA programs"
+    ],
+    "Educational Institutions": [
+        "University of California Berkeley is in the United States",
+        "Oxford University Press published new books",
+        "Massachusetts Institute of Technology leads in research",
+        "Indian Institute of Management Ahmedabad started classes",
+        "Stanford University Medical Center treats patients"
+    ],
+    "Companies and Businesses": [
+        "Apple Inc. launched the new iPhone",
+        "Tata Consultancy Services hired new employees",
+        "Google LLC is based in Mountain View",
+        "Amazon.com Inc. expanded its operations",
+        "Tesla Motors opened a factory in Texas"
+    ],
+    "Government Organizations": [
+        "Ministry of External Affairs issued a statement",
+        "Department of Homeland Security increased security",
+        "Central Bureau of Investigation filed charges",
+        "European Union Commission met in Brussels",
+        "Federal Bureau of Investigation conducted investigations"
+    ],
+    "Mixed Entities": [
+        "Tim Cook of Apple Inc. visited Shanghai, China",
+        "Mark Zuckerberg founded Facebook in Harvard University",
+        "Microsoft CEO Satya Nadella spoke at Google headquarters",
+        "Dr. Jane Smith from Johns Hopkins University visited Tokyo",
+        "Tesla founder Elon Musk launched SpaceX rockets from Florida"
+    ],
+    "Locations": [
+        "New York City hosted the United Nations meeting",
+        "Silicon Valley is located in California, United States",
+        "Mount Everest is in Nepal and Tibet",
+        "The Taj Mahal is located in Agra, India",
+        "Rio de Janeiro hosted the Olympic Games"
+    ],
+    "Sports Organizations": [
+        "Manchester United played against Real Madrid",
+        "International Olympic Committee made announcements",
+        "Board of Control for Cricket in India scheduled matches",
+        "National Basketball Association started new season",
+        "Federation Internationale de Football Association met in Switzerland"
+    ],
+    "Media and Entertainment": [
+        "The New York Times published breaking news",
+        "British Broadcasting Corporation aired documentaries",
+        "Warner Brothers Studios released new movies",
+        "Sony Pictures Entertainment signed new contracts",
+        "Netflix Inc. produced original content"
+    ],
+    "Complex Sentences": [
+        "Google CEO Sundar Pichai met Microsoft founder Bill Gates in Seattle",
+        "Harvard Professor Robert Jones visited Oxford University in England",
+        "United Nations Secretary General António Guterres addressed the European Parliament",
+        "Apple CEO Tim Cook announced partnership with IBM Corporation in New York",
+        "World Bank President David Malpass met IMF Director in Washington DC"
+    ],
+    "Financial Institutions": [
+        "Goldman Sachs Group Inc. reported earnings",
+        "State Bank of India opened new branches",
+        "Bank of America Corporation increased interest rates",
+        "Deutsche Bank AG restructured operations",
+        "JPMorgan Chase & Co. announced new policies"
+    ],
+    "Research Organizations": [
+        "National Aeronautics and Space Administration launched satellites",
+        "European Organization for Nuclear Research conducted experiments",
+        "Indian Space Research Organisation planned moon mission",
+        "World Wildlife Fund protected endangered species",
+        "National Science Foundation awarded grants"
+    ],
+    "Cultural Institutions": [
+        "British Museum displayed ancient artifacts",
+        "Smithsonian Institution hosted exhibitions",
+        "Library of Congress preserved documents",
+        "Louvre Museum attracted tourists in Paris",
+        "Metropolitan Museum of Art showcased paintings"
+    ],
+    "Military and Defense": [
+        "United States Department of Defense increased budget",
+        "North Atlantic Treaty Organization conducted exercises",
+        "Indian Air Force performed operations",
+        "Royal Navy patrolled the waters",
+        "People's Liberation Army held parade"
+    ]
+}

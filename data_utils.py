@@ -85,7 +85,7 @@ class CoNLLDatasetLoader:
     
     def process_file(self, input_path, output_path):
         """
-        Process CoNLL format file and convert to simplified format
+        Process CoNLL format file and convert to simplified format with POS tags
         
         Args:
             input_path (str): Path to input file
@@ -94,7 +94,7 @@ class CoNLLDatasetLoader:
         logger.info(f"Processing file: {input_path}")
         try:
             with open(input_path, 'r', encoding='utf-8') as f_in, \
-                 open(output_path, 'w', encoding='utf-8') as f_out:
+                open(output_path, 'w', encoding='utf-8') as f_out:
                 
                 for line in f_in:
                     line = line.strip()
@@ -105,8 +105,9 @@ class CoNLLDatasetLoader:
                     parts = line.split()
                     if len(parts) >= 4:
                         token = parts[0]
+                        pos_tag = parts[1]  # Extract POS tag
                         ner_tag = parts[3]
-                        f_out.write(f"{token} {ner_tag}\n")
+                        f_out.write(f"{token}\t{pos_tag}\t{ner_tag}\n")  # Tab-separated format
             
             logger.info(f"Successfully processed file: {input_path}")
         except Exception as e:

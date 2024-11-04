@@ -19,7 +19,7 @@ from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
 
 logger = setup_logger('training')
 
-def parallel_prepare_features(sentences, tokens=None, labels=None):
+def parallel_prepare_features(sentences, tokens=None, pos_tags=None, labels=None):
     """Prepare features in parallel"""
     n_jobs = cpu_count()
     chunk_size = max(1, len(sentences) // n_jobs)
@@ -27,12 +27,13 @@ def parallel_prepare_features(sentences, tokens=None, labels=None):
     # Split data into chunks
     sentence_chunks = [sentences[i:i + chunk_size] for i in range(0, len(sentences), chunk_size)]
     token_chunks = [tokens[i:i + chunk_size] for i in range(0, len(tokens), chunk_size)] if tokens else [None] * len(sentence_chunks)
+    pos_chunks = [pos_tags[i:i + chunk_size] for i in range(0, len(pos_tags), chunk_size)] if pos_tags else [None] * len(sentence_chunks)
     label_chunks = [labels[i:i + chunk_size] for i in range(0, len(labels), chunk_size)] if labels else [None] * len(sentence_chunks)
     
     # Process chunks in parallel
     results = Parallel(n_jobs=n_jobs)(
-        delayed(prepare_data)(sentence_chunk, token_chunk, label_chunk)
-        for sentence_chunk, token_chunk, label_chunk in zip(sentence_chunks, token_chunks, label_chunks)
+        delayed(prepare_data)(sentence_chunk, token_chunk, pos_chunk, label_chunk)
+        for sentence_chunk, token_chunk, pos_chunk, label_chunk in zip(sentence_chunks, token_chunks, pos_chunks, label_chunks)
     )
     
     # Combine results
@@ -56,29 +57,57 @@ class NERModel:
         logger.info(f"Initialized NERModel with {self.n_jobs} CPU cores")
     
     def create_pipeline(self):
-        """Create a faster model pipeline using LinearSVC"""
+        """Create a faster model pipeline using LinearSVC with improved convergence"""
         return Pipeline([
             ('vectorizer', DictVectorizer(sparse=True)),
             ('scaler', StandardScaler(with_mean=False)),
             ('classifier', LinearSVC(
                 dual='auto',
                 class_weight='balanced',
-                max_iter=1000,
-                random_state=42
+                max_iter=2000,  # Increased
+                tol=1e-4,      # Added tolerance parameter
+                C=1.0,         # Regularization parameter
+                random_state=42,
+                # Early stopping
+                loss='squared_hinge',
+                fit_intercept=True,
+                intercept_scaling=1.0
             ))
         ])
     
     def train_model(self, pipeline, X_train, y_train):
-        """Train model with progress tracking"""
+        """Train model with progress tracking and improved convergence monitoring"""
         logger.info("Starting model training")
         try:
-            # Fit the pipeline with progress updates
-            pipeline.fit(X_train, y_train)
+            # Add validation split for early monitoring
+            from sklearn.model_selection import train_test_split
+            X_train_split, X_val_split, y_train_split, y_val_split = train_test_split(
+                X_train, y_train, test_size=0.1, random_state=42, stratify=y_train
+            )
+            
+            # Fit the pipeline with intermediate validation
+            best_score = 0
+            patience = 3
+            no_improve_count = 0
+            prev_val_score = 0
+            
+            logger.info("Training with validation monitoring...")
+            pipeline.fit(X_train_split, y_train_split)
+            
+            # Get validation score
+            val_score = pipeline.score(X_val_split, y_val_split)
+            logger.info(f"Validation accuracy: {val_score:.4f}")
             
             # Extract components
             vectorizer = pipeline.named_steps['vectorizer']
             scaler = pipeline.named_steps['scaler']
             model = pipeline.named_steps['classifier']
+            
+            # Final training on full dataset if validation performance is good
+            if val_score > 0.9:  # You can adjust this threshold
+                logger.info("Retraining on full dataset...")
+                pipeline.fit(X_train, y_train)
+                model = pipeline.named_steps['classifier']
             
             return model, vectorizer, scaler
             
@@ -138,17 +167,20 @@ class NERModel:
         logger.info("Starting model training and evaluation")
         
         try:
-            # Load data
+            # Load data with POS tags
             logger.info("Loading and preparing data...")
-            train_sentences, train_tokens, train_labels = load_conll_data(train_file)
-            valid_sentences, valid_tokens, valid_labels = load_conll_data(valid_file)
-            test_sentences, test_tokens, test_labels = load_conll_data(test_file)
+            train_sentences, train_tokens, train_pos, train_labels = load_conll_data(train_file)
+            valid_sentences, valid_tokens, valid_pos, valid_labels = load_conll_data(valid_file)
+            test_sentences, test_tokens, test_pos, test_labels = load_conll_data(test_file)
             
             # Prepare features in parallel
             logger.info("Preparing features with parallel processing...")
-            train_features, train_y = parallel_prepare_features(train_sentences, train_tokens, train_labels)
-            valid_features, valid_y = parallel_prepare_features(valid_sentences, valid_tokens, valid_labels)
-            test_features, test_y = parallel_prepare_features(test_sentences, test_tokens, test_labels)
+            train_features, train_y = parallel_prepare_features(
+                train_sentences, train_tokens, train_pos, train_labels)
+            valid_features, valid_y = parallel_prepare_features(
+                valid_sentences, valid_tokens, valid_pos, valid_labels)
+            test_features, test_y = parallel_prepare_features(
+                test_sentences, test_tokens, test_pos, test_labels)
             
             # Convert to numpy arrays
             y_train = np.array(train_y)
@@ -173,6 +205,8 @@ class NERModel:
             
             # Save model artifacts
             logger.info("Saving model artifacts...")
+            os.makedirs(self.model_dir, exist_ok=True)
+            
             with open(os.path.join(self.model_dir, 'model.pkl'), 'wb') as f:
                 pickle.dump(model, f)
             with open(os.path.join(self.model_dir, 'vectorizer.pkl'), 'wb') as f:
@@ -190,7 +224,7 @@ class NERModel:
             
             # Save cache path for future reference
             feature_info['features_cache'] = str(self.ne_features.resource_dir / "entity_features.json")
-
+            
             with open(os.path.join(self.model_dir, 'metrics.json'), 'w') as f:
                 json.dump(metrics, f, indent=2)
             with open(os.path.join(self.model_dir, 'feature_info.json'), 'w') as f:
