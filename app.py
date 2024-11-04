@@ -20,77 +20,94 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Add custom CSS
+# Custom CSS
 st.markdown("""
 <style>
-    /* ... (existing styles) ... */
-    
-    /* Input text container */
-    .input-container {
-        background-color: #1e1e1e;
-        border: 1px solid #333;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 10px 0;
+    /* Theme colors */
+    :root {
+        --primary-bg: rgb(17, 19, 23);
+        --secondary-bg: rgb(25, 28, 34);
+        --border-color: rgba(250, 250, 250, 0.2);
+        --highlight-color: rgba(76, 175, 80, 0.3);
+        --text-color: rgb(250, 250, 250);
     }
-    
-    /* Entity text styling */
+
+    /* Section header */
+    .section-header {
+        color: var(--text-color);
+        font-size: 1.1rem;
+        font-weight: 500;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    /* Entity text container */
     .entity-text {
-        font-family: 'system-ui', sans-serif;
-        font-size: 1.1em;
-        line-height: 1.8;
-        color: #ffffff;
+        font-family: "Source Code Pro", monospace;
+        font-size: 0.875rem;
+        line-height: 1.6;
+        color: var(--text-color);
+        background-color: var(--primary-bg);
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--border-color);
+        margin-bottom: 1rem;
     }
-    
+
     /* Entity highlight */
     .entity-highlight {
-        background-color: #4CAF50;
-        color: #000;
-        padding: 2px 6px;
-        border-radius: 4px;
-        margin: 0 2px;
+        background-color: var(--highlight-color);
+        color: var(--text-color);
+        padding: 0.125rem 0.25rem;
+        border-radius: 0.25rem;
+        margin: 0 0.125rem;
+        border: 1px solid rgba(76, 175, 80, 0.5);
     }
-    
+
     /* POS tag styling */
     .pos-tag {
-        color: #888;
+        color: rgba(250, 250, 250, 0.6);
         font-size: 0.7em;
         position: relative;
         top: -0.5em;
-        margin-left: 2px;
+        margin-left: 0.125rem;
     }
-    
-    /* Entities summary box */
+
+    /* Entity summary section */
     .entities-box {
-        background-color: #2d2d2d;
-        border: 1px solid #444;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 15px 0;
+        background-color: var(--primary-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-top: 1rem;
     }
-    
+
     .entities-title {
-        color: #ffffff;
-        font-size: 1.1em;
-        margin-bottom: 10px;
+        color: var(--text-color);
+        font-size: 0.875rem;
+        margin-bottom: 0.75rem;
         font-weight: 500;
     }
-    
-    .entity-chip {
-        display: inline-block;
-        background-color: #4CAF50;
-        color: #000;
-        padding: 5px 10px;
-        border-radius: 15px;
-        margin: 4px;
-        font-size: 0.9em;
-    }
-    
+
     .entity-container {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 10px;
+        gap: 0.5rem;
+    }
+
+    .entity-chip {
+        background-color: var(--highlight-color);
+        color: var(--text-color);
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+        font-size: 0.875rem;
+        border: 1px solid rgba(76, 175, 80, 0.4);
+    }
+
+    /* Override Streamlit's default container padding */
+    .element-container {
+        padding: 0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -182,51 +199,47 @@ def plot_confusion_matrix(conf_matrix, split_name):
         raise
 
 def display_tagged_text(result, show_pos_tags=False):
-    """Display tagged text with improved styling"""
-    with st.expander(f"Input: {result['sentence']}", expanded=True):
-        # Create the input text container
-        st.markdown('<div class="input-container">', unsafe_allow_html=True)
-        
-        # Format the text with entities and POS tags
+    """Display tagged text with correct entity summary box structure"""
+    with st.expander("Analysis Result", expanded=True):
+        # Format tokens and entities
         html_parts = []
         tokens = result['sentence'].split()
         predictions = [pred for _, pred in result['predictions']]
         pos_tags = result['pos_tags']
         
         for i, (token, is_entity, pos_tag) in enumerate(zip(tokens, predictions, pos_tags)):
+            pos_tag_html = f'<span class="pos-tag">{pos_tag}</span>' if show_pos_tags else ''
+            
             if is_entity:
                 html_parts.append(
-                    f'<span class="entity-highlight">{token}'
-                    f'<span class="pos-tag">{pos_tag}</span></span>'
+                    f'<span class="entity-highlight">{token}{pos_tag_html}</span>'
                 )
             else:
-                html_parts.append(
-                    f'{token}<span class="pos-tag">{pos_tag}</span>'
-                )
+                html_parts.append(f'{token}{pos_tag_html}')
             
-            # Add space between tokens
             if i < len(tokens) - 1 and not tokens[i+1] in {',', '.', '!', '?', ':', ';'}:
                 html_parts.append(' ')
+
+        # Create the main content
+        st.markdown('<div class="section-header">Identified Entities</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="entity-text">{"".join(html_parts)}</div>', unsafe_allow_html=True)
         
-        # Display the formatted text
-        st.markdown(
-            f'<div class="entity-text">{"".join(html_parts)}</div>',
-            unsafe_allow_html=True
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Show entity summary
+        # Add entity summary with exact structure
         entities = [token for token, pred in result['predictions'] if pred == 1]
         if entities:
-            st.markdown(
-                '<div class="entities-box">'
-                '<div class="entities-title">Identified Entities</div>'
-                '<div class="entity-container">' +
-                ''.join([f'<span class="entity-chip">{entity}</span>' 
-                        for entity in entities]) +
-                '</div></div>',
-                unsafe_allow_html=True
-            )
+            entity_chips = ''.join([
+                f'<span class="entity-chip">{entity}</span>'
+                for entity in entities
+            ])
+            
+            entity_box_html = f"""
+                                <div class="entities-box">
+                                    <div class="entities-title">Entity Summary</div>
+                                    <div class="entity-container">
+                                        {entity_chips}
+                                    </div>
+                                </div>"""
+            st.markdown(entity_box_html, unsafe_allow_html=True)
 
 def process_text_input(input_text, predictor, as_batch=False):
     """Process input text and display results"""
